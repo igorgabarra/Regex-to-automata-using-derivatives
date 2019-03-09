@@ -7,9 +7,8 @@ import Regex
 main :: IO (RE Char)
 main =
   do -- read the input program
-     putStrLn "\nHi! This algorithm converts a regular expression to a finite automata."
-     putStrLn "Version 1.0"
-     putStrLn "Author: Igor Gabarra\n\n"
+     putStrLn "\nHi! This algorithm converts a regular expression to an automata using derivatives."
+     putStrLn "Version 1.0\n\n"
      putStr "Regular Expression: "
      regex  <- getLine
      putStr "States of the automata: "
