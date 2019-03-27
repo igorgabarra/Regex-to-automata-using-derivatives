@@ -96,3 +96,87 @@ substring (x : xs) e
    = case prefix (x : xs) e of
       Just res -> Just res
       Nothing  -> cons x <$> substring xs e
+
+-- parsing
+
+data Tree a
+  = TEps
+  | TChar a
+  | TPair (Tree a) (Tree a)
+  | TLeft (Tree a)
+  | TRight (Tree a)
+  | TNil
+  | TCons (Tree a) (Tree a)
+  deriving (Eq, Ord, Show)
+
+mkEps :: RE a -> Maybe (Tree a)
+mkEps (Star _)
+  = return TNil
+mkEps (e :*: e')
+  = TPair <$> mkEps e <*> mkEps e'
+mkEps (e :|: e')
+  | null e = TLeft <$> mkEps e
+  | otherwise = TRight <$> mkEps e'
+mkEps Epsilon = Just TEps 
+mkEps _ = Nothing
+
+inj :: Eq a => RE a -> a -> Tree a -> Maybe (Tree a)
+inj (Chr a) a' TEps
+  | a == a' = Just (TChar a)
+  | otherwise = Nothing
+inj (e1 :|: _) a (TLeft t1)
+  = TLeft <$> inj e1 a t1
+inj (_ :|: e2) a (TRight t2)
+  = TRight <$> inj e2 a t2
+inj (e1 :*: _) a (TPair t1 t2)
+  = flip TPair t2 <$> inj e1 a t1
+inj (e1 :*: _) a (TLeft (TPair t1 t2))
+  = flip TPair t2 <$> inj e1 a t1
+inj (e1 :*: e2) a (TRight t2)
+  = TPair <$> mkEps e1 <*> inj e2 a t2
+inj (Star e) a (TPair t1 t2)
+  = flip TCons t2 <$> inj e a t1
+inj _ _ _ = Nothing
+
+dParse :: Eq a => RE a -> [a] -> Maybe (Tree a)
+dParse e []
+  | null e = mkEps e
+  | otherwise = Nothing
+dParse e (x : xs)
+  =  maybe Nothing
+           (inj e x)
+           (dParse (deriv e x) xs)
+
+
+first :: RE a -> RE a
+--first Empty = Empty
+--first lambda = nullable
+first a = a
+first e :|: e' = first e :|: first e'
+--first e :*: e' 
+--if lambda belongs to e then first e :|: first e'
+--otherwise                   first e
+first e :*: e'
+      | belongs (e :*: e') = first e :|: first e'
+      | otherwise          = first e
+first (Star e') = first e'
+
+
+belongs :: RE a -> Bool
+belongs Empty    = True
+belongs Epsilon  = False
+belongs Chr e    = False
+belongs e :*: e' = belongs e || belongs e'
+belongs e :|: e' = belongs e || belongs e'
+belongs Star e   = belongs e
+
+
+
+solving :: RE a -> (RE a, RE a)
+solving regex = (deriv regex (first regex), first regex)
+
+memoryWords :: [RE a]
+memoryWords = []
+
+--calculating regex memory = case solving regex of
+--                      (x, xs) -> do  newMemory <- x  
