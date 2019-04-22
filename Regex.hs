@@ -1,9 +1,10 @@
 module Regex where
 
 import Prelude hiding (null)
+import Control.Monad
+import Control.Applicative
 
 -- definition of RE syntax
-
 data RE a
    = Empty              -- empty RE
    | Epsilon            -- empty string
@@ -14,7 +15,6 @@ data RE a
    deriving (Eq, Ord, Show)
 
 -- nullability tests
-
 null :: RE a -> Bool
 null Empty   = False
 null Epsilon = True
@@ -31,16 +31,20 @@ infixl 4 :*:
 infixl 3 :|:
 
 (.|.) :: RE a -> RE a -> RE a
-Empty .|. e' = e'
-e .|. Empty  = e
-e .|. e'     = e :|: e'
+Empty .|. e'        = e'
+e .|. Empty         = e
+e .|. e'            = e :|: e'
+Epsilon .|. Empty   = Epsilon
+Epsilon .|. Epsilon = Epsilon
 
 (.*.) :: RE a -> RE a -> RE a
-Empty .*. e'   = Empty
-e .*. Empty    = Empty
-Epsilon .*. e' = e'
-e .*. Epsilon  = e
-e .*. e'       = e :*: e'
+Empty .*. e'        = Empty
+e .*. Empty         = Empty
+Epsilon .*. Empty   = Empty
+Epsilon .*. Epsilon = Epsilon
+Epsilon .*. e'      = e'
+e .*. Epsilon       = e
+e .*. e'            = e :*: e'
 
 star :: RE a -> RE a
 star Empty   = Epsilon
@@ -50,16 +54,16 @@ star e       = Star e
 -- Brzozowski derivative
 
 deriv :: Eq a => RE a -> a -> RE a
-deriv Empty _ = Empty
-deriv Epsilon _ = Empty
+deriv Empty _      = Empty
+deriv Epsilon _    = Empty
 deriv (Chr c) c'
-   | c == c'   = Epsilon
-   | otherwise = Empty
+   | c == c'       = Epsilon
+   | otherwise     = Empty
 deriv (e :*: e') c
-   | null e    = (deriv e c .*. e') .|. deriv e' c
-   | otherwise = deriv e c .*. e'
+   | null e        = (deriv e c .*. e') .|. deriv e' c
+   | otherwise     = deriv e c .*. e'
 deriv (e :|: e') c = deriv e c .|. deriv e' c
-deriv (Star e) c = deriv e c .*. star e
+deriv (Star e) c   = deriv e c .*. star e
 
 -- prefix computation
 
@@ -74,30 +78,94 @@ cons x (Result cs rs) = Result (x : cs) rs
 
 prefix :: Eq a => [a] -> RE a -> Maybe (Result a)
 prefix [] e
-   | null e
-      = Just (Result [] [])
-   | otherwise
-      = Nothing
+   | null e    = Just (Result [] [])
+   | otherwise = Nothing
 prefix (x : xs) e
-   | null e
-      = Just (Result [] (x : xs))
-   | otherwise
-      = cons x <$> prefix xs (deriv e x)
+   | null e    = Just (Result [] (x : xs))
+   | otherwise = cons x <$> prefix xs (deriv e x)
 
 -- matching substrings
 
 substring :: Eq a => [a] -> RE a -> Maybe (Result a)
 substring [] e
-   | null e
-      = Just (Result [] [])
-   | otherwise
-      = Nothing
+   | null e    = Just (Result [] [])
+   | otherwise = Nothing
 substring (x : xs) e
-   = case prefix (x : xs) e of
-      Just res -> Just res
-      Nothing  -> cons x <$> substring xs e
+               = case prefix (x : xs) e of
+                      Just res -> Just res
+                      Nothing  -> cons x <$> substring xs e
 
--- parsing
+-------------- Working with lists --------------
+
+newtype List a = List [a] deriving Eq
+
+instance Ord a => Ord (List a) where
+   List x <= List y = (length x, x) <= (length y, y)
+
+type Word = List Char
+
+instance Functor List where
+   fmap f (List x) = List (fmap f x)
+
+instance Applicative List where
+   pure x = List [x]
+   List x <*> List y = List (x <*> y)
+
+instance Alternative List where
+   empty = List []
+   List x <|> List y = List (x <|> y)
+
+instance Monad List where
+   fs >>= f = joinn (f <$> fs) --what is <$>
+
+union' :: Ord a => [a] -> [a] -> [a]
+union' [] y = y
+union' x [] = x
+union' xa@(x:xs) ya@(y:ys) = case compare x y of
+                             LT -> x : union' xs ya
+                             EQ -> x : union' xs ys
+                             GT -> y : union' xa ys
+
+joinn :: List (List a) -> List a
+joinn (List []) = List []
+joinn (List (x:xs)) = lcat x (joinn (List xs))
+
+crossProduct :: (Ord a, Ord b, Ord c) => (a -> b -> c) -> [a] -> [b] -> [c]
+crossProduct _ [] _ = []
+crossProduct _ _ [] = []
+crossProduct f (x:xs) ya@(y:ys)
+   = f x y : (crossProduct f [x] ys) `union'` (crossProduct f xs ya)
+
+lcat :: List a -> List a -> List a
+lcat (List x) (List y) = List (x ++ y)
+
+concatenation :: Ord a => [List a] -> [List a] -> [List a]
+concatenation = crossProduct lcat
+
+kleeneClosure :: Ord a => (a -> a -> a) -> a -> [a] -> [a]
+kleeneClosure _ x [] = [x]
+kleeneClosure f x ya@(y:ys)
+   | x == y    = kleeneClosure f x ys
+   | otherwise = x : crossProduct f ya (kleeneClosure f x ya)
+
+clo :: Ord a => [List a] -> [List a]
+clo = kleeneClosure lcat (List [])
+
+enumRegularExpression :: Ord a => RE a -> [[a]]
+enumRegularExpression exp = [w | (List w) <- enumRE exp]
+
+enumRE :: Ord a => RE a -> [List a]
+enumRE Empty      = []
+enumRE Epsilon    = [List []]
+enumRE (Chr a)    = [List [a]]
+enumRE (exp1 :*: exp2)
+                  = concatenation (enumRE exp1) (enumRE exp2)
+enumRE (exp1 :|: exp2)
+                  = enumRE exp1 `union'` enumRE exp2
+enumRE (Star exp) = clo (enumRE exp)
+
+
+-- Making Regular Expressions Trees
 
 data Tree a
   = TEps
@@ -169,7 +237,6 @@ belongs Chr e    = False
 belongs e :*: e' = belongs e || belongs e'
 belongs e :|: e' = belongs e || belongs e'
 belongs Star e   = belongs e
-
 
 
 solving :: RE a -> (RE a, RE a)
